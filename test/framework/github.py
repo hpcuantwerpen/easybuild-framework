@@ -406,17 +406,16 @@ class GithubTest(EnhancedTestCase):
             'pr_target_account': gh.GITHUB_EB_MAIN,
         })
 
-        # TODO: no 5.x PRs for new easyblocks
         # PR with new easyblock plus non-easyblock file
-        # all_ebs_pr1964 = ['lammps.py']
+        all_ebs_pr1964 = ['lammps.py']
 
         # PR with changed easyblock
-        all_ebs_pr3631 = ['root.py']
+        all_ebs_pr3674 = ['llvm.py']
 
         # PR with more than one easyblock
-        all_ebs_pr3596 = ['wps.py', 'wrf.py']
+        all_ebs_pr1949 = ['configuremake.py', 'rpackage.py']
 
-        for pr, all_ebs in [(3631, all_ebs_pr3631), (3596, all_ebs_pr3596)]:
+        for pr, all_ebs in [(1964, all_ebs_pr1964), (3674, all_ebs_pr3674), (1949, all_ebs_pr1949)]:
             try:
                 tmpdir = os.path.join(self.test_prefix, 'pr%s' % pr)
                 with self.mocked_stdout_stderr():
@@ -606,7 +605,7 @@ class GithubTest(EnhancedTestCase):
         self.assertExists(repodir)
         shafile = os.path.join(repodir, 'latest-sha')
         self.assertTrue(re.match('^[0-9a-f]{40}$', read_file(shafile)))
-        self.assertExists(os.path.join(repodir, 'easybuild', 'easyconfigs', 'f', 'foss', 'foss-2019b.eb'))
+        self.assertExists(os.path.join(repodir, 'easybuild', 'easyconfigs', 'f', 'foss', 'foss-2024a.eb'))
 
         # current directory should not have changed after calling download_repo
         self.assertTrue(os.path.samefile(cwd, os.getcwd()))
