@@ -32,7 +32,6 @@ Authors:
 * Toon Willems (Ghent University)
 """
 import base64
-import copy
 import getpass
 import glob
 import functools
@@ -55,7 +54,7 @@ from easybuild.framework.easyconfig.easyconfig import process_easyconfig
 from easybuild.framework.easyconfig.parser import EasyConfigParser
 from easybuild.tools import LooseVersion
 from easybuild.tools.build_log import EasyBuildError, EasyBuildExit, print_msg, print_warning
-from easybuild.tools.config import build_option
+from easybuild.tools.config import DEFAULT_DOWNLOAD_MAX_ATTEMPTS, build_option
 from easybuild.tools.filetools import apply_patch, copy_dir, copy_easyblocks, copy_file, copy_framework_files
 from easybuild.tools.filetools import det_patched_files, download_file, extract_file
 from easybuild.tools.filetools import get_easyblock_class_name, mkdir, read_file, symlink, which, write_file
@@ -546,9 +545,16 @@ def fetch_files_from_pr(pr, path=None, github_user=None, github_account=None, gi
                                        github_user=github_user)
 
     # determine list of changed files via diff
-    diff_fn = os.path.basename(pr_data['diff_url'])
+    diff_url = pr_data['diff_url']
+    diff_fn = os.path.basename(diff_url)
     diff_filepath = os.path.join(path, diff_fn)
-    download_file(diff_fn, pr_data['diff_url'], diff_filepath, forced=True, trace=False)
+    # max. 6 attempts + initial wait time of 10sec -> max. 10 * (2^6) = 640sec (~10min) before giving up on download
+    # see also https://github.com/easybuilders/easybuild-framework/issues/4869
+    max_attempts = DEFAULT_DOWNLOAD_MAX_ATTEMPTS
+    download_file(diff_fn, diff_url, diff_filepath, forced=True, trace=False,
+                  max_attempts=max_attempts)
+    if not os.path.exists(diff_filepath):
+        raise EasyBuildError(f"Failed to download {diff_url}, even after {max_attempts} attempts and being patient...")
     diff_txt = read_file(diff_filepath)
     _log.debug("Diff for PR #%s:\n%s", pr, diff_txt)
 
@@ -700,17 +706,21 @@ def fetch_files_from_commit(commit, files=None, path=None, github_account=None, 
         diff_url = os.path.join(GITHUB_URL, github_account, github_repo, 'commit', commit + '.diff')
         diff_fn = os.path.basename(diff_url)
         diff_filepath = os.path.join(path, diff_fn)
-        if download_file(diff_fn, diff_url, diff_filepath, forced=True, trace=False):
+        # max. 6 attempts + initial wait time of 10sec -> max. 10 * (2^6) = 640sec (~10min) before giving up on download
+        # see also https://github.com/easybuilders/easybuild-framework/issues/4869
+        max_attempts = DEFAULT_DOWNLOAD_MAX_ATTEMPTS
+        download_file(diff_fn, diff_url, diff_filepath, forced=True, trace=False,
+                      max_attempts=max_attempts)
+        if os.path.exists(diff_filepath):
             diff_txt = read_file(diff_filepath)
             _log.debug("Diff for commit %s:\n%s", commit, diff_txt)
 
             files = det_patched_files(txt=diff_txt, omit_ab_prefix=True, github=True, filter_deleted=True)
             _log.debug("List of patched files for commit %s: %s", commit, files)
         else:
-            raise EasyBuildError(
-                "Failed to download diff for commit %s of %s/%s", commit, github_account, github_repo,
-                exit_code=EasyBuildExit.FAIL_GITHUB
-            )
+            msg = f"Failed to download diff for commit {commit} of {github_account}/{github_repo} "
+            msg += " (after {max_attempts} attempts)"
+            raise EasyBuildError(msg, exit_code=EasyBuildExit.FAIL_GITHUB)
 
     # download tarball for specific commit
     repo_commit = download_repo(repo=github_repo, commit=commit, account=github_account)
@@ -1280,9 +1290,19 @@ def push_branch_to_github(git_repo, target_account, target_repo, branch):
 
 def is_patch_for(patch_name, ec):
     """Check whether specified patch matches any patch in the provided EasyConfig instance."""
-    res = False
+    # Extract name from patch entry
+    def get_name(patch):
+        if isinstance(patch, (tuple, list)):
+            patch = patch[0]
+        elif isinstance(patch, dict):
+            try:
+                patch = patch['name']
+            except KeyError:
+                raise EasyBuildError(f"Invalid patch spec in {ec.path}: Missing 'name' key",
+                                     exit_code=EasyBuildExit.VALUE_ERROR)
+        return patch
 
-    patches = copy.copy(ec['patches'])
+    patches = [get_name(p) for p in ec['patches']]
 
     with ec.disable_templating():
         # take into account both list of extensions (via exts_list) and components (cfr. Bundle easyblock)
@@ -1294,17 +1314,9 @@ def is_patch_for(patch_name, ec):
                     'version': entry[1],
                 }
                 options = entry[2]
-                patches.extend(p[0] % templates if isinstance(p, (tuple, list)) else p % templates
-                               for p in options.get('patches', []))
+                patches.extend(get_name(p) % templates for p in options.get('patches', []))
 
-    for patch in patches:
-        if isinstance(patch, (tuple, list)):
-            patch = patch[0]
-        if patch == patch_name:
-            res = True
-            break
-
-    return res
+    return patch_name in patches
 
 
 def det_patch_specs(patch_paths, file_info, ec_dirs):
@@ -1395,7 +1407,7 @@ def find_software_name_for_patch(patch_name, ec_dirs):
                     soft_name = ec['ec']['name']
                     break
         except EasyBuildError as err:
-            _log.debug("Ignoring easyconfig %s that fails to parse: %s", path, err)
+            _log.warning("Ignoring easyconfig %s that fails to parse: %s", path, err)
         sys.stdout.write('\r%s of %s easyconfigs checked' % (idx + 1, nr_of_ecs))
         sys.stdout.flush()
 
