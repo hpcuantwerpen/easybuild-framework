@@ -838,6 +838,7 @@ def download_file(filename, url, path, forced=False, trace=True, max_attempts=No
     used_urllib = std_urllib
     switch_to_requests = False
 
+    wait = False
     wait_time = initial_wait_time
 
     while not downloaded and attempt_cnt < max_attempts:
@@ -880,6 +881,7 @@ def download_file(filename, url, path, forced=False, trace=True, max_attempts=No
                 switch_to_requests = True
             elif status_code == 429:  # too many requests
                 _log.warning(f"Downloading of {url} failed with HTTP status code 429 (Too many requests)")
+                wait = True
             elif 400 <= status_code <= 499:
                 _log.warning("URL %s was not found (HTTP response code %s), not trying again" % (url, status_code))
                 break
@@ -906,10 +908,11 @@ def download_file(filename, url, path, forced=False, trace=True, max_attempts=No
                 _log.info("Downloading using requests package instead of urllib2")
                 used_urllib = requests
 
-            # exponential backoff
-            wait_time *= 2
-            _log.info(f"Waiting for {wait_time} seconds before trying download of {url} again...")
-            time.sleep(wait_time)
+            if wait:
+                _log.info(f"Waiting for {wait_time} seconds before trying download of {url} again...")
+                time.sleep(wait_time)
+                # exponential backoff
+                wait_time *= 2
 
     if downloaded:
         _log.info("Successful download of file %s from url %s to path %s" % (filename, url, path))
@@ -1551,10 +1554,10 @@ def create_patch_info(patch_spec):
     Create info dictionary from specified patch spec.
     """
     # Valid keys that can be used in a patch spec dict
-    valid_keys = ['name', 'copy', 'level', 'sourcepath', 'alt_location']
+    valid_keys = ['name', 'copy', 'level', 'sourcepath', 'alt_location', 'opts']
 
     if isinstance(patch_spec, (list, tuple)):
-        if not len(patch_spec) == 2:
+        if len(patch_spec) != 2:
             error_msg = "Unknown patch specification '%s', only 2-element lists/tuples are supported!"
             raise EasyBuildError(error_msg, str(patch_spec))
 
@@ -1595,18 +1598,16 @@ def create_patch_info(patch_spec):
                 )
 
         # Dict must contain at least the patchfile name
-        if 'name' not in patch_info.keys():
+        if 'name' not in patch_info:
             raise EasyBuildError(
                 "Wrong patch spec '%s', when using a dict 'name' entry must be supplied", str(patch_spec),
                 exit_code=EasyBuildExit.EASYCONFIG_ERROR
             )
-        if 'copy' not in patch_info.keys():
+        if 'copy' not in patch_info:
             validate_patch_spec(patch_info['name'])
-        else:
-            if 'sourcepath' in patch_info.keys() or 'level' in patch_info.keys():
-                raise EasyBuildError("Wrong patch spec '%s', you can't use 'sourcepath' or 'level' with 'copy' (since "
-                                     "this implies you want to copy a file to the 'copy' location)",
-                                     str(patch_spec))
+        elif 'sourcepath' in patch_info or 'level' in patch_info:
+            raise EasyBuildError(f"Wrong patch spec '{patch_spec}', you can't use 'sourcepath' or 'level' with 'copy' "
+                                 "(since this implies you want to copy a file to the 'copy' location)")
     else:
         error_msg = (
             "Wrong patch spec, should be string, 2-tuple with patch name + argument, or a dict "
@@ -1626,10 +1627,11 @@ def validate_patch_spec(patch_spec):
         )
 
 
-def apply_patch(patch_file, dest, fn=None, copy=False, level=None, use_git=False):
+def apply_patch(patch_file, dest, fn=None, copy=False, level=None, use_git=False, options=None):
     """
     Apply a patch to source code in directory dest
     - assume unified diff created with "diff -ru old new"
+    - options are additional CLI options to pass to patch command
 
     Raises EasyBuildError on any error and returns True on success
     """
@@ -1709,6 +1711,8 @@ def apply_patch(patch_file, dest, fn=None, copy=False, level=None, use_git=False
         backup_option = '-b ' if build_option('backup_patched_files') else ''
         patch_cmd = f"patch {backup_option} -p{level} -i {abs_patch_file}"
 
+    if options:
+        patch_cmd += f' {options}'
     res = run_shell_cmd(patch_cmd, fail_on_error=False, hidden=True, work_dir=abs_dest)
 
     if res.exit_code:
