@@ -448,7 +448,7 @@ class EasyBlock:
         if checksum and chksum_input_git is not None:
             # ignore any checksum for given filename due to changes in https://github.com/python/cpython/issues/90021
             # tarballs made for git repos are not reproducible when created with Python < 3.9
-            if sys.version_info[0] >= 3 and sys.version_info[1] < 9:
+            if sys.version_info < (3, 9):
                 print_warning(
                     "Reproducible tarballs of Git repos are only possible when using Python 3.9+ to run EasyBuild. "
                     f"Skipping checksum verification of {chksum_input} since Python < 3.9 is used."
@@ -2830,8 +2830,6 @@ class EasyBlock:
             self.log.info("Applying patch %s" % patch['name'])
             trace_msg("applying patch %s" % patch['name'])
 
-            # patch source at specified index (first source if not specified)
-            srcind = patch.get('source', 0)
             # if patch level is specified, use that (otherwise let apply_patch derive patch level)
             level = patch.get('level', None)
             # determine suffix of source path to apply patch in (if any)
@@ -2840,16 +2838,14 @@ class EasyBlock:
             copy_patch = 'copy' in patch and 'sourcepath' not in patch
             options = patch.get('opts', None)  # Extra options for patch command
 
-            self.log.debug("Source index: %s; patch level: %s; source path suffix: %s; copy patch: %s; options: %s",
-                           srcind, level, srcpathsuffix, copy_patch, options)
+            self.log.debug("Patch level: %s; source path suffix: %s; copy patch: %s; options: %s",
+                           level, srcpathsuffix, copy_patch, options)
 
             if beginpath is None:
-                try:
-                    beginpath = self.src[srcind]['finalpath']
-                    self.log.debug("Determine begin path for patch %s: %s" % (patch['name'], beginpath))
-                except IndexError as err:
-                    raise EasyBuildError("Can't apply patch %s to source at index %s of list %s: %s",
-                                         patch['name'], srcind, self.src, err)
+                if not self.src:
+                    raise EasyBuildError("Can't apply patch %s to source if no sources are given", patch['name'])
+                beginpath = self.src[0]['finalpath']
+                self.log.debug("Determined begin path for patch %s: %s" % (patch['name'], beginpath))
             else:
                 self.log.debug("Using specified begin path for patch %s: %s" % (patch['name'], beginpath))
 
@@ -4662,8 +4658,11 @@ class EasyBlock:
         run_hook(step, self.hooks, pre_step_hook=True, args=[self])
 
         for step_method in step_methods:
+            # step_method is a lambda function that takes an EasyBlock instance as an argument,
+            # and returns the actual method
+            current_method = step_method(self)
             # Remove leading underscore from e.g. "_test_step"
-            method_name = '_'.join(step_method.__code__.co_names).lstrip('_')
+            method_name = current_method.__name__.lstrip('_')
             self.log.info("Running method %s part of step %s", method_name, step)
 
             if self.dry_run:
@@ -4671,9 +4670,7 @@ class EasyBlock:
 
                 # if an known possible error occurs, just report it and continue
                 try:
-                    # step_method is a lambda function that takes an EasyBlock instance as an argument,
-                    # and returns the actual method, so use () to execute it
-                    step_method(self)()
+                    current_method()
                 except Exception as err:
                     if build_option('extended_dry_run_ignore_errors'):
                         dry_run_warning("ignoring error %s" % err, silent=self.silent)
@@ -4682,9 +4679,7 @@ class EasyBlock:
                         raise
                 self.dry_run_msg('')
             else:
-                # step_method is a lambda function that takes an EasyBlock instance as an argument,
-                # and returns the actual method, so use () to execute it
-                step_method(self)()
+                current_method()
 
         run_hook(step, self.hooks, post_step_hook=True, args=[self])
 
