@@ -5032,7 +5032,9 @@ def build_and_install_one(ecdict, init_env):
             except EasyBuildError as err:
                 _log.warning("Failed to create build environment dump for easyconfig %s: %s", reprod_spec, err)
 
-            # also add any extension easyblocks used during the build for reproducibility
+            # also add any component/extension easyblocks used during the build for reproducibility
+            if hasattr(app, 'comp_instances'):
+                copy_easyblocks_for_reprod([comp for cfg, comp in app.comp_instances], reprod_dir)
             if app.ext_instances:
                 copy_easyblocks_for_reprod(app.ext_instances, reprod_dir)
             # If not already done remove the granted write permissions if we did so
@@ -5119,14 +5121,16 @@ def build_and_install_one(ecdict, init_env):
                     block = det_full_ec_version(app.cfg) + ".block"
                     repo.add_easyconfig(ecdict['original_spec'], app.name, block, buildstats, currentbuildstats)
                 repo.add_easyconfig(spec, app.name, det_full_ec_version(app.cfg), buildstats, currentbuildstats)
-                for patch in app.patches:
-                    repo.add_patch(patch['path'], app.name)
+                patches = app.patches
+                for ext in app.exts:
+                    patches += ext.get('patches', [])
+                for patch in patches:
+                    if 'path' in patch:
+                        repo.add_patch(patch['path'], app.name)
                 repo.commit("Built %s" % app.full_mod_name)
                 del repo
             except EasyBuildError as err:
                 _log.warning("Unable to commit easyconfig to repository: %s", err)
-
-        run_hook(EASYBLOCK, hooks, post_step_hook=True, args=[app])
 
         # cleanup logs
         app.close_log()
@@ -5144,10 +5148,14 @@ def build_and_install_one(ecdict, init_env):
                 _log.debug("Copied easyconfig file %s to %s", spec, newspec)
 
                 # copy patches
-                for patch in app.patches:
-                    target = os.path.join(new_log_dir, os.path.basename(patch['path']))
-                    copy_file(patch['path'], target)
-                    _log.debug("Copied patch %s to %s", patch['path'], target)
+                patches = app.patches
+                for ext in app.exts:
+                    patches += ext.get('patches', [])
+                for patch in patches:
+                    if 'path' in patch:
+                        target = os.path.join(new_log_dir, os.path.basename(patch['path']))
+                        copy_file(patch['path'], target)
+                        _log.debug("Copied patch %s to %s", patch['path'], target)
 
                 if build_option('read_only_installdir') and not app.cfg['stop']:
                     # take away user write permissions (again)
@@ -5200,6 +5208,8 @@ def build_and_install_one(ecdict, init_env):
 
     if not success:
         copy_build_dirs_logs_failed_install(application_log, silent, app, ecdict['ec'])
+
+    run_hook(EASYBLOCK, hooks, post_step_hook=True, args=[app])
 
     del app
 
