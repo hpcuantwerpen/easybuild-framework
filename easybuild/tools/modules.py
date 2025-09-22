@@ -1104,17 +1104,24 @@ class ModulesTool:
             # restore initial environment if provided
             if init_env is None:
                 raise EasyBuildError("Initial environment required when purging before loading, but not available")
-            else:
-                restore_env(init_env)
 
-            # make sure $MODULEPATH is set correctly after purging
+            restore_env(init_env)
+
+            # sync mod_paths class variable with $MODULEPATH environment variable after resetting environment
+            self.mod_paths = None
             self.check_module_path()
 
         # extend $MODULEPATH if needed
         for mod_path in mod_paths:
+            priority = None
+            if isinstance(mod_path, tuple) and len(mod_path) == 2:
+                mod_path, priority = mod_path
+            elif not isinstance(mod_path, str):
+                raise EasyBuildError(f"Incorrect mod_paths entry encountered when loading module(s): {mod_path}")
+
             full_mod_path = os.path.join(install_path('mod'), build_option('suffix_modules_path'), mod_path)
             if os.path.exists(full_mod_path):
-                self.prepend_module_path(full_mod_path)
+                self.prepend_module_path(full_mod_path, priority=priority)
 
         loaded_modules = self.loaded_modules()
         for mod in modules:
@@ -2105,11 +2112,11 @@ class Lmod(ModulesTool):
         """
         # Lmod produces "module show" output with setenv statements like:
         # setenv("EBROOTBZIP2","/tmp/software/bzip2/1.0.6")
-        # - line starts with setenv(
+        # - line starts with setenv( or setenv{ (see also https://github.com/TACC/Lmod/issues/792)
         # - both variable name and value are enclosed in double quotes, separated by comma
         # - value can contain spaces!
         # - line ends with )
-        regex = re.compile(r'^setenv\("%s"\s*,\s*"(?P<value>.+)"\)' % var_name, re.M)
+        regex = re.compile(r'^setenv[\({]"%s"\s*,\s*"(?P<value>.+)"[\)}]' % var_name, re.M)
         value = self.get_value_from_modulefile(mod_name, regex, strict=False)
 
         if value:
