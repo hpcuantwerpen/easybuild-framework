@@ -518,6 +518,9 @@ class EasyBlock:
             # Making a copy to avoid modifying the object with pops
             source = source.copy()
             filename = source.pop('filename', None)
+            if filename is None:
+                raise EasyBuildError(f"Missing required 'filename' for source {source}")
+
             extract_cmd = source.pop('extract_cmd', None)
             download_filename = source.pop('download_filename', None)
             source_urls = source.pop('source_urls', None)
@@ -526,10 +529,6 @@ class EasyBlock:
             if source:
                 raise EasyBuildError("Found one or more unexpected keys in 'sources' specification: %s", source)
 
-        elif isinstance(source, (list, tuple)) and len(source) == 2:
-            self.log.deprecated("Using a 2-element list/tuple to specify sources is deprecated, "
-                                "use a dictionary with 'filename', 'extract_cmd' keys instead", '4.0')
-            filename, extract_cmd = source
         else:
             raise EasyBuildError("Unexpected source spec, not a string or dict: %s", source)
 
