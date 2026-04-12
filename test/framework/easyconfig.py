@@ -87,15 +87,6 @@ try:
 except ImportError:
     pass
 
-EXPECTED_DOTTXT_TOY_DEPS = """digraph graphname {
-toy;
-"GCC/6.4.0-2.28 (EXT)";
-intel;
-toy -> intel;
-toy -> "GCC/6.4.0-2.28 (EXT)";
-}
-"""
-
 
 class EasyConfigTest(EnhancedTestCase):
     """ easyconfig tests """
@@ -3281,12 +3272,9 @@ class EasyConfigTest(EnhancedTestCase):
     def test_dep_graph(self):
         """Test for dep_graph."""
         try:
-            # do specific import, since python-graph-dot is not compatible with setuptools >= 82.0.0
-            # in which pkg_resources was removed;
-            # see also https://github.com/easybuilders/easybuild-framework/issues/5110
-            import pygraph.classes.digraph  # noqa # pylint:disable=unused-import
+            import graphviz  # noqa # pylint:disable=unused-import
         except ImportError:
-            print("Skipping test_dep_graph, since pygraph is not available")
+            print("Skipping test_dep_graph, since graphviz is not available")
             return
 
         test_easyconfigs = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'easyconfigs', 'test_ecs')
@@ -3302,34 +3290,34 @@ class EasyConfigTest(EnhancedTestCase):
         ec_files = [(ec_file, False)]
         ecs, _ = parse_easyconfigs(ec_files)
 
-        dot_file = os.path.join(self.test_prefix, 'test.dot')
+        graphname = 'testgraph'
+        dot_file = os.path.join(self.test_prefix, f'{graphname}.dot')
         ordered_ecs = resolve_dependencies(ecs, self.modtool, retain_all_deps=True)
         dep_graph(dot_file, ordered_ecs)
 
-        # hard check for expect .dot file contents
-        # 3 nodes should be there: 'GCC/6.4.0-2.28 (EXT)', 'toy', and 'intel/2018a'
-        # and 2 edges: 'toy -> intel' and 'toy -> "GCC/6.4.0-2.28 (EXT)"'
         dottxt = read_file(dot_file)
 
-        self.assertTrue(dottxt.startswith('digraph graphname {'))
-
-        # compare sorted output, since order of lines can change
-        ordered_dottxt = '\n'.join(sorted(dottxt.split('\n')))
-        ordered_expected = '\n'.join(sorted(EXPECTED_DOTTXT_TOY_DEPS.split('\n')))
-        self.assertEqual(ordered_dottxt, ordered_expected)
+        # hard check for expect .dot file contents
+        patterns = [
+            rf"digraph {graphname} {{",
+            # 3 nodes should be there: 'GCC/6.4.0-2.28 (EXT)', 'toy', and 'intel/2018a'
+            r"^\s*intel\s+\[",
+            r"^\s*toy\s+\[",
+            r"^\s*\"GCC/6\.4\.0-2\.28 \(EXT\)\"\s+\[",
+            # and 2 edges: 'toy -> intel' and 'toy -> "GCC/6.4.0-2.28 (EXT)"'
+            r"^\s*toy -> intel\s+\[",
+            r"^\s*toy -> \"GCC/6\.4\.0-2\.28 \(EXT\)\"\s+\[",
+        ]
+        self.assert_multi_regex(patterns, dottxt)
 
     def test_dep_graph_multi_deps(self):
         """
         Test for dep_graph using easyconfig that uses multi_deps.
         """
         try:
-            # do specific import, since python-graph-dot is not compatible with setuptools >= 82.0.0
-            # in which pkg_resources was removed;
-            # see also https://github.com/easybuilders/easybuild-framework/issues/5110
-            import pygraph.classes.digraph  # noqa # pylint:disable=unused-import
-
+            import graphviz  # noqa # pylint:disable=unused-import
         except ImportError:
-            print("Skipping test_dep_graph_multi_deps, since pygraph is not available")
+            print("Skipping test_dep_graph_multi_deps, since graphviz is not available")
             return
 
         test_easyconfigs = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'easyconfigs', 'test_ecs')
@@ -3351,7 +3339,8 @@ class EasyConfigTest(EnhancedTestCase):
         ec_files = [(test_ec, False)]
         ecs, _ = parse_easyconfigs(ec_files)
 
-        dot_file = os.path.join(self.test_prefix, 'test.dot')
+        graphname = 'testgraph_multi_deps'
+        dot_file = os.path.join(self.test_prefix, f'{graphname}.dot')
         ordered_ecs = resolve_dependencies(ecs, self.modtool, retain_all_deps=True)
         dep_graph(dot_file, ordered_ecs)
 
@@ -3360,13 +3349,13 @@ class EasyConfigTest(EnhancedTestCase):
         # and 2 edges: 'toy -> intel' and 'toy -> "GCC/6.4.0-2.28 (EXT)"'
         dottxt = read_file(dot_file)
 
-        self.assertTrue(dottxt.startswith('digraph graphname {'))
+        self.assertTrue(dottxt.startswith(f'digraph {graphname} {{'))
 
         # just check for toy -> GCC deps
         # don't bother doing full output check
         # (different order for fields depending on Python version makes that tricky)
         for gccver in ['4.6.3', '4.8.3', '7.3.0-2.30']:
-            self.assertTrue('"GCC/%s";' % gccver in dottxt)
+            self.assertTrue('"GCC/%s"' % gccver in dottxt)
             self.assertTrue('"toy/0.0" -> "GCC/%s"' % gccver in dottxt)
 
     def test_ActiveMNS_singleton(self):
@@ -5342,6 +5331,26 @@ class EasyConfigTest(EnhancedTestCase):
         self.assertEqual(ec2['ec'].version, '0.0')
         self.assertIsInstance(ec2['ec'].toolchain, SystemToolchain)
         self.assertTrue(os.path.samefile(ec2['ec'].path, toy_ec))
+
+        # Returned easyconfigs are independent as-if there was no caching
+        ec3 = process_easyconfig(toy_ec)[0]
+        ec3['ec']['name'] = 'newname'
+        ec3['ec']['version'] = '99.1234'
+        ec3['spec'] = 'non-existing.eb'
+        ec3['dependencies'].append('Dummy')
+        self.assertEqual(ec3['ec'].name, 'newname')
+        self.assertEqual(ec3['ec'].version, '99.1234')
+        self.assertEqual(ec3['spec'], 'non-existing.eb')
+        self.assertEqual(ec3['dependencies'], ['Dummy'])
+        # Neither the previously returned nor newly requested easyconfigs are modified by the above
+        # FIXME checks below are disabled, because fix in framework PR #4818 led to excessive
+        #       creation of EasyConfig instances, so it was reverted in framework PR #5166
+        ec2_2 = process_easyconfig(toy_ec)[0]
+        for orig_ec in (ec2, ec2_2):
+            # FIXME self.assertEqual(orig_ec['ec'].name, 'toy')
+            # FIXME self.assertEqual(orig_ec['ec'].version, '0.0')
+            self.assertEqual(orig_ec['spec'], toy_ec)
+            # FIXME self.assertEqual(orig_ec['dependencies'], [])
 
         # also check whether easyconfigs cache works with end-to-end test
         args = [libtoy_ec, '--trace']

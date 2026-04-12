@@ -43,8 +43,10 @@ Authors:
 * Jan Andre Reuter (Juelich Supercomputing Centre)
 * Jasper Grimm (UoY)
 * Alex Domingo (Vrije Universiteit Brussel)
+* Alexander Grund (TU Dresden)
 """
 import concurrent
+import contextlib
 import copy
 import functools
 import glob
@@ -517,9 +519,12 @@ class EasyBlock:
         elif isinstance(source, dict):
             # Making a copy to avoid modifying the object with pops
             source = source.copy()
-            filename = source.pop('filename', None)
-            if filename is None:
+            try:
+                filename = source.pop('filename')
+            except KeyError:
                 raise EasyBuildError(f"Missing required 'filename' for source {source}")
+            if not isinstance(filename, str) or filename == '':
+                raise EasyBuildError(f"Expected 'filename' to be a non-empty string, got {filename!r}")
 
             extract_cmd = source.pop('extract_cmd', None)
             download_filename = source.pop('download_filename', None)
@@ -601,7 +606,7 @@ class EasyBlock:
             if not isinstance(patch_specs, tuple) or len(patch_specs) != 2:
                 raise EasyBuildError('Patch specs must be a tuple of (patches, post-install patches) or a list')
             post_install_patches = patch_specs[1]
-            patch_specs = itertools.chain(*patch_specs)
+            patch_specs = itertools.chain.from_iterable(patch_specs)
 
         patches = []
         for index, patch_spec in enumerate(patch_specs):
@@ -693,6 +698,7 @@ class EasyBlock:
 
                     source_urls = resolve_template(ext_options.get('source_urls', []), template_values)
                     checksums = resolve_template(ext_options.get('checksums', []), template_values)
+                    ext_src['checksums'] = checksums
 
                     download_instructions = resolve_template(ext_options.get('download_instructions'), template_values)
 
@@ -735,6 +741,11 @@ class EasyBlock:
                                 # copy 'path' entry to 'src' for use with extensions
                                 'src': src['path'],
                             })
+                            filename = src['name']
+                        else:
+                            filename = source.get('filename')
+                        if filename is not None:
+                            ext_src['sources'] = [filename]
 
                     else:
 
@@ -752,6 +763,7 @@ class EasyBlock:
                             raise EasyBuildError(error_msg, type(src_fn).__name__, src_fn)
 
                         src_fn = resolve_template(src_fn, template_values)
+                        ext_src['sources'] = [src_fn]
 
                         if fetch_files:
                             src_path = self.obtain_file(src_fn, extension=True, urls=source_urls,
@@ -805,7 +817,7 @@ class EasyBlock:
                     if fetch_files:
                         ext_patches = self.fetch_patches(patch_specs=ext_patch_specs, extension=True)
                     else:
-                        ext_patches = [create_patch_info(p) for p in itertools.chain(*ext_patch_specs)]
+                        ext_patches = [create_patch_info(p) for p in itertools.chain.from_iterable(ext_patch_specs)]
 
                     if ext_patches:
                         self.log.debug('Found patches for extension %s: %s', ext_name, ext_patches)
@@ -851,9 +863,28 @@ class EasyBlock:
         return exts_sources
 
     @_obtain_file_update_progress_bar_on_return
-    def obtain_file(self, filename, extension=False, urls=None, download_filename=None, force_download=False,
-                    git_config=None, no_download=False, download_instructions=None, alt_location=None,
-                    warning_only=False):
+    def obtain_file(self, filename, **kwargs):
+        """
+        Locate file with given name.
+        Wrapper around obtain_file_raise_on_failure which will raise an exception if file could not be found,
+        which checks whether --fetch-all was used.
+        """
+        try:
+            return self.obtain_file_raise_on_failure(filename, **kwargs)
+        except Exception:
+            if build_option('fetch_all'):
+                urls = kwargs.get('urls')
+                if not urls:
+                    urls = ['NO_SOURCE_URLS_PROVIDED']
+                print_warning(f"FAILED: File {filename} not found from {urls[0]}. Continuing ...")
+                return None
+            else:
+                raise
+
+    @_obtain_file_update_progress_bar_on_return
+    def obtain_file_raise_on_failure(self, filename, extension=False, urls=None, download_filename=None,
+                                     force_download=False, git_config=None, no_download=False,
+                                     download_instructions=None, alt_location=None, warning_only=False):
         """
         Locate the file with the given name
         - searches in different subdirectories of source path
@@ -2787,10 +2818,11 @@ class EasyBlock:
             checksums = ent.get('checksums', [])
         except EasyBuildError:
             if isinstance(ent, EasyConfig):
-                sources = ent.get_ref('sources')
-                data_sources = ent.get_ref('data_sources')
-                patches = ent.get_ref('patches') + ent.get_ref('postinstallpatches')
-                checksums = ent.get_ref('checksums')
+                with ent.disable_templating():
+                    sources = ent['sources']
+                    data_sources = ent['data_sources']
+                    patches = ent['patches'] + ent['postinstallpatches']
+                    checksums = ent['checksums']
 
         # Single source should be re-wrapped as a list, and checksums with it
         if isinstance(sources, dict):
@@ -2800,25 +2832,30 @@ class EasyBlock:
         if isinstance(checksums, str):
             checksums = [checksums]
 
-        sources = sources + data_sources
+        def get_name(fn, key):
+            # if the filename is a tuple, the actual source file name is the first element
+            if isinstance(fn, tuple):
+                fn = fn[0]
+            # if the filename is a dict, the actual source file name is inside
+            if isinstance(fn, dict):
+                fn = fn[key]
+            return fn
 
-        if not checksums:
-            checksums_from_json = self.get_checksums_from_json()
-            # recreate a list of checksums. If each filename is found, the generated list of checksums should match
-            # what is expected in list format
-            for fn in sources + patches:
-                # if the filename is a tuple, the actual source file name is the first element
-                if isinstance(fn, tuple):
-                    fn = fn[0]
-                # if the filename is a dict, the actual source file name is the "filename" element
-                if isinstance(fn, dict):
-                    fn = fn["filename"]
-                if fn in checksums_from_json.keys():
-                    checksums += [checksums_from_json[fn]]
+        sources = [get_name(src, 'filename') for src in itertools.chain(sources, data_sources)]
+        patches = [get_name(patch, 'name') for patch in patches]
 
         if source_cnt is None:
             source_cnt = len(sources)
-        patch_cnt, checksum_cnt = len(patches), len(checksums)
+        patch_cnt = len(patches)
+
+        if not checksums and (source_cnt + patch_cnt) > 0:
+            checksums_from_json = self.get_checksums_from_json()
+            # recreate a list of checksums. If each filename is found, the generated list of checksums should match
+            # what is expected in list format
+            with contextlib.suppress(KeyError):
+                checksums.extend(checksums_from_json[fn] for fn in sources + patches)
+
+        checksum_cnt = len(checksums)
 
         if (source_cnt + patch_cnt) != checksum_cnt:
             if sub:
@@ -2874,17 +2911,9 @@ class EasyBlock:
         checksum_issues.extend(self.check_checksums_for(self.cfg))
 
         # also check checksums for extensions
-        for ext in self.cfg.get_ref('exts_list'):
-            # just skip extensions for which only a name is specified
-            # those are just there to check for things that are in the "standard library"
-            if not isinstance(ext, str):
-                ext_name = ext[0]
-                # take into account that extension may be a 2-tuple with just name/version
-                ext_opts = ext[2] if len(ext) == 3 else {}
-                # only a single source per extension is supported (see source_tmpl)
-                source_cnt = 1 if not ext_opts.get('nosource') else 0
-                res = self.check_checksums_for(ext_opts, sub="of extension %s" % ext_name, source_cnt=source_cnt)
-                checksum_issues.extend(res)
+        for ext in self.collect_exts_file_info(fetch_files=False, verify_checksums=False):
+            res = self.check_checksums_for(ext, sub=f"of extension {ext['name']}")
+            checksum_issues.extend(res)
 
         return checksum_issues
 
@@ -4682,14 +4711,28 @@ class EasyBlock:
                     test_cmd = os.path.join(source_path, self.name, test)
                     if os.path.exists(test_cmd):
                         break
-                if not os.path.exists(test_cmd):
-                    raise EasyBuildError(f"Test specifies invalid path: {test_cmd}")
+                else:
+                    test_cmd = test
+            if not os.path.exists(test_cmd):
+                raise EasyBuildError(f"Test specifies non-existing path: {test_cmd}")
 
+            if os.path.isfile(test_cmd):
+                original_perms = os.lstat(test_cmd).st_mode
+                if original_perms & stat.S_IEXEC:
+                    original_perms = None
+                else:
+                    adjust_permissions(test_cmd, stat.S_IEXEC, add=True, recursive=False)
+            else:
+                original_perms = None
             try:
-                self.log.debug(f"Running test {test_cmd}")
                 run_shell_cmd(test_cmd)
-            except EasyBuildError as err:
+            except RunShellCmdError:
+                raise  # Let that propagate which will report more information
+            except Exception as err:
                 raise EasyBuildError(f"Running test {test_cmd} failed: {err}")
+            finally:
+                if original_perms is not None:
+                    adjust_permissions(test_cmd, original_perms, relative=False)
 
     def update_config_template_run_step(self):
         """Update the the easyconfig template dictionary with easyconfig.TEMPLATE_NAMES_EASYBLOCK_RUN_STEP names"""

@@ -113,6 +113,7 @@ DEFAULT_MODULE_SYNTAX = 'Lua'
 DEFAULT_MODULES_TOOL = 'Lmod'
 DEFAULT_PATH_SUBDIRS = {
     'buildpath': 'build',
+    'bwrap_installpath': 'bwrap',
     'containerpath': 'containers',
     'installpath': '',
     'packagepath': 'packages',
@@ -304,6 +305,7 @@ BUILD_OPTIONS_CMDLINE = {
         'allow_modules_tool_mismatch',
         'allow_unresolved_templates',
         'backup_patched_files',
+        'bwrap',
         'consider_archived_easyconfigs',
         'container_build_image',
         'cuda_sanity_check_accept_ptx_as_devcode',
@@ -319,6 +321,7 @@ BUILD_OPTIONS_CMDLINE = {
         'experimental',
         'extended_dry_run',
         'fail_on_mod_files_gcccore',
+        'fetch_all',
         'force',
         'generate_devel_module',
         'group_writable_installdir',
@@ -354,6 +357,7 @@ BUILD_OPTIONS_CMDLINE = {
         'upload_test_report',
         'update_modules_tool_cache',
         'use_ccache',
+        'use_entrypoints',
         'use_existing_modules',
         'use_f90cache',
         'wait_on_lock_limit',
