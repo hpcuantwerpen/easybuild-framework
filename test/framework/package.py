@@ -45,7 +45,7 @@ from easybuild.tools.version import VERSION as EASYBUILD_VERSION
 FPM_OUTPUT_FILE = 'fpm_mocked.out'
 
 # purposely using non-bash script, to detect issues with shebang line being ignored (run_shell_cmd with use_bash=False)
-MOCKED_FPM = """#!/usr/bin/env python
+MOCKED_FPM = """#!/usr/bin/env python3
 import os, sys
 
 def verbose(msg):
@@ -266,7 +266,6 @@ class PackageTest(EnhancedTestCase):
         self.assertTrue(regex_pkg.search(pkgtxt), "Pattern '%s' not found in: %s" % (regex_pkg.pattern, pkgtxt))
         regex_pkg = re.compile(r"""DESCRIPTION:.*\nand newlines""", re.MULTILINE)
         self.assertTrue(regex_pkg.search(pkgtxt), "Pattern '%s' not found in: %s" % (regex_pkg.pattern, pkgtxt))
-        self.mock_stdout(False)
 
 
 def suite(loader=None):
