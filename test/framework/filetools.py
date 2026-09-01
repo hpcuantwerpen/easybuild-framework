@@ -46,6 +46,7 @@ import textwrap
 import time
 import types
 from io import StringIO
+from pathlib import Path
 from test.framework.github import requires_github_access
 from test.framework.utilities import EnhancedTestCase, TestLoaderFiltered, init_config
 from unittest import TextTestRunner
@@ -829,11 +830,13 @@ class FileToolsTest(EnhancedTestCase):
     def test_mkdir(self):
         """Test mkdir function."""
 
-        def check_mkdir(path, error=None, **kwargs):
+        def check_mkdir(path, error=None, expected_path=None, **kwargs):
             """Create specified directory with mkdir, and check for correctness."""
             if error is None:
+                if expected_path is None:
+                    expected_path = path
                 ft.mkdir(path, **kwargs)
-                self.assertTrue(os.path.exists(path) and os.path.isdir(path), "Directory %s exists" % path)
+                self.assertTrue(os.path.isdir(expected_path), "Directory %s exists" % expected_path)
             else:
                 self.assertErrorRegex(EasyBuildError, error, ft.mkdir, path, **kwargs)
 
@@ -854,7 +857,7 @@ class FileToolsTest(EnhancedTestCase):
         check_mkdir(giddir, set_gid=True)
         self.assertTrue(os.stat(giddir).st_mode & stat.S_ISGID, "gid bit set %s" % giddir)
         self.assertFalse(os.stat(giddir).st_mode & stat.S_ISVTX, "no sticky bit %s" % giddir)
-        # setting stciky bit works
+        # setting sticky bit works
         stickydir = os.path.join(barfoodir, 'sticky')
         check_mkdir(stickydir, sticky=True)
         self.assertFalse(os.stat(stickydir).st_mode & stat.S_ISGID, "no gid bit %s" % stickydir)
@@ -871,6 +874,11 @@ class FileToolsTest(EnhancedTestCase):
         # existing parent dirs are untouched, no sticky/group ID bits set
         self.assertFalse(os.stat(foodir).st_mode & (stat.S_ISGID | stat.S_ISVTX), "no gid/sticky bit %s" % foodir)
         self.assertFalse(os.stat(barfoodir).st_mode & (stat.S_ISGID | stat.S_ISVTX), "no gid/sticky bit %s" % barfoodir)
+        # Relative path works
+        ft.change_dir(foodir)
+        check_mkdir(os.path.join('relative', 'subdir'), expected_path=os.path.join(foodir, 'relative'), parents=True)
+        # pathlib paths works
+        check_mkdir(Path(self.test_prefix) / 'pathlibdir')
 
     def test_path_matches(self):
         """Test path_matches function."""
@@ -2942,6 +2950,42 @@ class FileToolsTest(EnhancedTestCase):
         ft.write_file(os.path.join(dir_w_dir_and_file, 'file.h'), '')
         self.assertTrue(ft.dir_contains_files(dir_w_dir_and_file))
         self.assertTrue(ft.dir_contains_files(dir_w_dir_and_file, recursive=False))
+
+        # Folder that is a symlink or contains a symlink to a folder
+        symlink_dir = makedirs_in_test('symlink_dir')
+        symlink_empty_folder = os.path.join(symlink_dir, 'to_empty')
+        ft.symlink(empty_dir, symlink_empty_folder)
+        self.assertFalse(ft.dir_contains_files(symlink_dir))
+        self.assertFalse(ft.dir_contains_files(symlink_dir, recursive=False))
+        self.assertFalse(ft.dir_contains_files(symlink_empty_folder))
+        self.assertFalse(ft.dir_contains_files(symlink_empty_folder, recursive=False))
+        symlink_full_folder = os.path.join(symlink_dir, 'to_full')
+        ft.symlink(dir_w_file, symlink_full_folder)
+        self.assertTrue(ft.dir_contains_files(symlink_dir))
+        self.assertFalse(ft.dir_contains_files(symlink_dir, recursive=False))
+        self.assertTrue(ft.dir_contains_files(symlink_full_folder))
+        self.assertTrue(ft.dir_contains_files(symlink_full_folder, recursive=False))
+
+        dir_w_symlinked_file = makedirs_in_test('dir_w_symlinked_file')
+        ft.symlink(os.path.join(dir_w_file, 'file.h'), os.path.join(dir_w_symlinked_file, 'file.h'))
+        self.assertTrue(ft.dir_contains_files(dir_w_symlinked_file))
+        self.assertTrue(ft.dir_contains_files(dir_w_symlinked_file, recursive=False))
+
+        dir_w_symlinked_file_in_subdir = makedirs_in_test('dir_w_symlinked_file_in_subdir', 'subdir')
+        subdir = os.path.join(dir_w_symlinked_file_in_subdir, 'subdir')
+        ft.symlink(os.path.join(dir_w_file, 'file.h'),
+                   os.path.join(subdir, 'file.h'))
+        self.assertTrue(ft.dir_contains_files(dir_w_symlinked_file_in_subdir))
+        self.assertFalse(ft.dir_contains_files(dir_w_symlinked_file_in_subdir, recursive=False))
+        self.assertTrue(ft.dir_contains_files(subdir))
+        self.assertTrue(ft.dir_contains_files(subdir, recursive=False))
+
+        # Broken symlink is not considered a file
+        ft.remove_file(os.path.join(dir_w_file, 'file.h'))
+        self.assertFalse(ft.dir_contains_files(dir_w_symlinked_file_in_subdir))
+        self.assertFalse(ft.dir_contains_files(dir_w_symlinked_file_in_subdir, recursive=False))
+        self.assertFalse(ft.dir_contains_files(subdir))
+        self.assertFalse(ft.dir_contains_files(subdir, recursive=False))
 
     def test_find_eb_script(self):
         """Test find_eb_script function."""

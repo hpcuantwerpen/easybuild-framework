@@ -61,6 +61,7 @@ import time
 import zlib
 from functools import partial
 from html.parser import HTMLParser
+from pathlib import Path
 import urllib.request as std_urllib
 
 from easybuild.base import fancylogger
@@ -1286,7 +1287,9 @@ def dir_contains_files(path, recursive=True):
     :recursive If False only the path itself is considered, else all subdirectories are also searched
     """
     if recursive:
-        return any(files for _root, _dirs, files in os.walk(path))
+        return any(os.path.isfile(os.path.join(root, file))
+                   for root, _dirs, files in os.walk(path, followlinks=True)
+                   for file in files)
     else:
         return any(os.path.isfile(os.path.join(path, x)) for x in os.listdir(path))
 
@@ -2076,11 +2079,12 @@ def mkdir(path, parents=False, set_gid=None, sticky=None):
     :param sticky: set the sticky bit on this directory (a.k.a. the restricted deletion flag),
                    to avoid users can removing/renaming files in this directory
     """
-    if not os.path.isabs(path):
-        path = os.path.abspath(path)
+    path = Path(path)
+    if not path.is_absolute():
+        path = path.absolute()
 
     # exit early if path already exists
-    if not os.path.exists(path):
+    if not path.exists():
         if set_gid is None:
             set_gid = build_option('set_gid_bit')
         if sticky is None:
@@ -2088,17 +2092,21 @@ def mkdir(path, parents=False, set_gid=None, sticky=None):
 
         _log.info("Creating directory %s (parents: %s, set_gid: %s, sticky: %s)", path, parents, set_gid, sticky)
         # set_gid and sticky bits are only set on new directories, so we need to determine the existing parent path
-        existing_parent_path = os.path.dirname(path)
+        existing_parent_path = path.parent
         try:
             if parents:
-                # climb up until we hit an existing path or the empty string (for relative paths)
-                while existing_parent_path and not os.path.exists(existing_parent_path):
-                    existing_parent_path = os.path.dirname(existing_parent_path)
-                os.makedirs(path, exist_ok=True)
+                # climb up until we hit an existing path
+                while not existing_parent_path.exists():
+                    parent = existing_parent_path.parent
+                    # In practice impossible but to avoid infinite loops
+                    if existing_parent_path == parent:
+                        raise EasyBuildError('Did not find any existing parent path or drive')
+                    existing_parent_path = parent
+                path.mkdir(parents=True, exist_ok=True)
             else:
-                os.mkdir(path)
+                path.mkdir()
         except FileExistsError as err:
-            if os.path.exists(path):
+            if path.exists():
                 # This may happen if a parallel build creates the directory after we checked for its existence
                 _log.debug("Directory creation aborted as it seems it was already created: %s", err)
             else:
@@ -2107,8 +2115,7 @@ def mkdir(path, parents=False, set_gid=None, sticky=None):
             raise EasyBuildError("Failed to create directory %s: %s", path, err)
 
         # set group ID and sticky bits, if desired
-        new_subdir = path[len(existing_parent_path):].lstrip(os.path.sep)
-        new_path = os.path.join(existing_parent_path, new_subdir.split(os.path.sep)[0])
+        new_path = existing_parent_path / path.relative_to(existing_parent_path).parts[0]
         set_gid_sticky_bits(new_path, set_gid, sticky, recursive=True)
     else:
         _log.debug("Not creating existing path %s" % path)
