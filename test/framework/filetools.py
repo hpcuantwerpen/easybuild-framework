@@ -627,8 +627,8 @@ class FileToolsTest(EnhancedTestCase):
         # make sure specified timeout is parsed correctly (as a float, not a string)
         opts = init_config(args=['--download-timeout=5.3'])
         init_config(build_options={'download_timeout': opts.download_timeout})
-        target_location = os.path.join(self.test_prefix, 'jenkins_robots.txt')
-        url = 'https://raw.githubusercontent.com/easybuilders/easybuild-framework/master/README.rst'
+        url = 'https://sources.easybuild.io/icons/blank.gif'
+        target_location = os.path.join(self.test_prefix, os.path.basename(url))
         try:
             request.urlopen(url)
             with self.mocked_stdout_stderr():
@@ -2443,6 +2443,14 @@ class FileToolsTest(EnhancedTestCase):
         # test copying of a single file, to a non-existing directory
         ft.copy(toy_file, os.path.join(self.test_prefix, 'foo'))
         self.assertTrue(os.path.isfile(os.path.join(self.test_prefix, 'foo', 'toy-0.0.eb')))
+
+        # Test using Path instance
+        toy_patch_path = Path(toy_patch)
+        ft.copy(toy_patch_path, os.path.join(self.test_prefix, 'foo'))
+        self.assertTrue(os.path.isfile(os.path.join(self.test_prefix, 'foo', toy_patch_path.name)))
+        # And as list
+        ft.copy([toy_patch_path], os.path.join(self.test_prefix, 'foo2'))
+        self.assertTrue(os.path.isfile(os.path.join(self.test_prefix, 'foo2', toy_patch_path.name)))
 
         # also test behaviour of copy under --dry-run
         build_options = {
