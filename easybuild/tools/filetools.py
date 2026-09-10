@@ -359,6 +359,11 @@ def symlink(source_path, symlink_path, use_abspath_source=True):
 
     if os.path.exists(symlink_path):
         abs_source_path = os.path.abspath(source_path)
+        if not os.path.islink(symlink_path):
+            raise EasyBuildError("Trying to symlink %s to %s, but there already is a %s at %s.",
+                                 source_path, symlink_path, "file" if os.path.isfile(symlink_path) else "folder",
+                                 symlink_path)
+
         symlink_target_path = os.path.abspath(os.readlink(symlink_path))
         if abs_source_path != symlink_target_path:
             raise EasyBuildError("Trying to symlink %s to %s, but the symlink already exists and points to %s.",
@@ -630,11 +635,14 @@ def det_common_path_prefix(paths):
         return None
 
 
-def normalize_path(path):
+def normalize_path(path: PathOrStr) -> str:
     """Normalize path removing empty and dot components.
 
     Similar to os.path.normpath but does not resolve '..' which may return a wrong path when symlinks are used
     """
+    if isinstance(path, Path):
+        # Path instances are already normalized
+        return str(path)
     # In POSIX 3 or more leading slashes are equivalent to 1
     if path.startswith(os.path.sep):
         if path.startswith(os.path.sep * 2) and not path.startswith(os.path.sep * 3):
@@ -3107,10 +3115,15 @@ def install_fake_vsc():
     return fake_vsc_path
 
 
-def get_easyblock_class_name(path):
-    """Make sure file is an easyblock and get easyblock class name"""
-    fn = os.path.basename(path).split('.')[0]
-    mod = load_source(fn, path)
+def get_easyblock_class_name(path: PathOrStr):
+    """Check that file is an easyblock and get easyblock class name"""
+    fn = Path(path).stem
+    try:
+        mod = load_source(fn, path)
+    except SyntaxError as err:
+        raise EasyBuildError("Failed to load easyblock file '%s': %s (line %d)", path, err.msg, err.lineno)
+    except ImportError as err:
+        raise EasyBuildError("Failed to load easyblock file '%s': %s", path, err)
     clsmembers = inspect.getmembers(mod, inspect.isclass)
     for cn, co in clsmembers:
         if co.__module__ == mod.__name__:

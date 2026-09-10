@@ -478,17 +478,23 @@ class FileToolsTest(EnhancedTestCase):
     def test_normalize_path(self):
         """Test normalize_path"""
         self.assertEqual(ft.normalize_path(''), '')
-        self.assertEqual(ft.normalize_path('/'), '/')
-        self.assertEqual(ft.normalize_path('//'), '//')
-        self.assertEqual(ft.normalize_path('///'), '/')
-        self.assertEqual(ft.normalize_path('/foo/bar/baz'), '/foo/bar/baz')
-        self.assertEqual(ft.normalize_path('/foo//bar/././baz/'), '/foo/bar/baz')
-        self.assertEqual(ft.normalize_path('foo//bar/././baz/'), 'foo/bar/baz')
-        self.assertEqual(ft.normalize_path('//foo//bar/././baz/'), '//foo/bar/baz')
-        self.assertEqual(ft.normalize_path('///foo//bar/././baz/'), '/foo/bar/baz')
-        self.assertEqual(ft.normalize_path('////foo//bar/././baz/'), '/foo/bar/baz')
-        self.assertEqual(ft.normalize_path('/././foo//bar/././baz/'), '/foo/bar/baz')
-        self.assertEqual(ft.normalize_path('//././foo//bar/././baz/'), '//foo/bar/baz')
+        test_cases = [
+            ('/', '/'),
+            ('//', '//'),
+            ('///', '/'),
+            ('/foo/bar/baz', '/foo/bar/baz'),
+            ('/foo//bar/././baz/', '/foo/bar/baz'),
+            ('foo//bar/././baz/', 'foo/bar/baz'),
+            ('//foo//bar/././baz/', '//foo/bar/baz'),
+            ('///foo//bar/././baz/', '/foo/bar/baz'),
+            ('////foo//bar/././baz/', '/foo/bar/baz'),
+            ('/././foo//bar/././baz/', '/foo/bar/baz'),
+            ('//././foo//bar/././baz/', '//foo/bar/baz'),
+        ]
+        for in_path, expected in test_cases:
+            with self.subTest(in_path=in_path):
+                self.assertEqual(ft.normalize_path(in_path), expected)
+                self.assertEqual(ft.normalize_path(Path(in_path)), expected)
 
     def test_is_parent_path(self):
         """Test is_parent_path"""
@@ -944,6 +950,12 @@ class FileToolsTest(EnhancedTestCase):
                               "Trying to symlink %s to %s, but the symlink already exists and points to %s." %
                               (test_file2, link, test_file),
                               ft.symlink, test_file2, link)
+
+        # Test when symlink is an existing file
+        self.assertErrorRegex(EasyBuildError,
+                              "Trying to symlink %s to %s, but there already is a file at %s." %
+                              (test_file2, test_file, test_file),
+                              ft.symlink, test_file2, test_file)
 
         # test resolve_path
         self.assertEqual(test_dir, ft.resolve_path(link_dir))
@@ -3628,6 +3640,23 @@ class FileToolsTest(EnhancedTestCase):
         toy_eb = os.path.join(test_ebs, 't', 'toy.py')
         self.assertEqual(ft.get_easyblock_class_name(toy_eb), 'EB_toy')
 
+        bad_py = os.path.join(self.test_prefix, 'bad_easyblock.py')
+
+        # test with syntax error in easyblock file
+        ft.write_file(bad_py, "def foo(:\n    pass\n")
+        err = r"^Failed to load easyblock file '/.*/bad_easyblock\.py': .* \(line 1\)$"
+        self.assertRaisesRegex(EasyBuildError, err, ft.get_easyblock_class_name, bad_py)
+
+        # test with import error in easyblock file
+        ft.write_file(bad_py, "import non_existent_module_xyz\n")
+        err = r"^Failed to load easyblock file '/.*/bad_easyblock\.py': No module named 'non_existent_module_xyz'$"
+        self.assertRaisesRegex(EasyBuildError, err, ft.get_easyblock_class_name, bad_py)
+
+        # Both
+        ft.write_file(bad_py, "def foo(:\n    pass\n", append=True)
+        err = r"^Failed to load easyblock file '/.*/bad_easyblock\.py': .* \(line 2\)$"
+        self.assertRaisesRegex(EasyBuildError, err, ft.get_easyblock_class_name, bad_py)
+
     def test_copy_easyblocks(self):
         """Test for copy_easyblocks function."""
 
@@ -3723,7 +3752,7 @@ class FileToolsTest(EnhancedTestCase):
         # (it's straight in the easybuild-framework directory)
         setup_py = 'setup.py'
         if os.path.exists(os.path.join(topdir, setup_py)):
-            test_files.append(os.path.join(setup_py))
+            test_files.append(setup_py)
             expected_entries.append(setup_py)
             expected_new.append(True)
 
