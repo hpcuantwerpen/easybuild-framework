@@ -59,7 +59,7 @@ from easybuild.tools.config import get_module_syntax, update_build_option
 from easybuild.tools.filetools import adjust_permissions, change_dir, copy_dir, copy_file, mkdir, read_file
 from easybuild.tools.filetools import remove_dir, remove_file, symlink, verify_checksum, write_file
 from easybuild.tools.module_generator import module_generator
-from easybuild.tools.modules import EnvironmentModules, Lmod, reset_module_caches
+from easybuild.tools.modules import EnvironmentModules, Lmod, NoModulesTool, reset_module_caches
 from easybuild.tools.output import PROGRESS_BAR_DOWNLOAD_ALL
 from easybuild.tools.run import RunShellCmdError
 from easybuild.tools.version import get_git_revision, this_is_easybuild
@@ -355,7 +355,7 @@ class EasyBlockTest(EnhancedTestCase):
         else:
             self.fail("Unknown module syntax: %s" % module_syntax)
 
-        self.assert_multi_regex(regexs, txt)
+        self.assertMultiRegex(regexs, txt, multi_line=True)
 
         # Repeat this but using an alternative envvars (instead of $HOME)
         list_of_envvars = ['SITE_INSTALLS', 'USER_INSTALLS']
@@ -401,7 +401,7 @@ class EasyBlockTest(EnhancedTestCase):
             else:
                 self.fail("Unknown module syntax: %s" % module_syntax)
 
-            self.assert_multi_regex(regexs, txt)
+            self.assertMultiRegex(regexs, txt, multi_line=True)
             os.unsetenv(envvar)
 
         # Check behaviour when directories do and do not exist
@@ -775,14 +775,14 @@ class EasyBlockTest(EnhancedTestCase):
         else:
             self.fail("Unknown module syntax: %s" % get_module_syntax())
 
-        self.assert_multi_regex(expected_patterns, txt)
+        self.assertMultiRegex(expected_patterns, txt, multi_line=True)
 
         non_expected_patterns = [
             r"^append[-_]path.*TEST_VAR_APPEND.*root.*baz",
             r"^prepend[-_]path.*CPATH.*root.*include/bar.*",
             r"^prepend[-_]path.*TEST_VAR.*root.*baz",
         ]
-        self.assert_multi_regex(non_expected_patterns, txt, assert_true=False)
+        self.assertNotMultiRegex(non_expected_patterns, txt)
 
         # cleanup
         eb.close_log()
@@ -1317,6 +1317,63 @@ class EasyBlockTest(EnhancedTestCase):
         self.assertTrue(os.path.samefile(eb.src[0]['path'], expected_path_src))
         self.assertTrue(os.path.samefile(eb.patches[0]['path'], expected_path_patch))
 
+    def test_fetch_step_source_deps(self):
+        """Test fetching sources with source dependencies."""
+
+        mod_tool_name = self.modtool.__class__.__name__
+
+        init_config([f'--sourcepath={self.test_prefix}', '--fetch'])
+
+        url = 'https://dummy-url-for-testing'
+        source_fn = 'mysource.tar.gz'
+        self.contents = textwrap.dedent(f"""
+            easyblock = "ConfigureMake"
+            name = "Uniq_1"
+            version = "3.14"
+            homepage = "http://example.com"
+            description = "test"
+            toolchain = SYSTEM
+            source_urls = ['{url}']
+            sources = ['{source_fn}']
+            source_deps = [('foo', '1.2.3')]
+        """)
+        self.writeEC()
+
+        eb = EasyBlock(EasyConfig(self.eb_file))
+
+        # --fetch is used, fake modules tool instance is used
+        self.assertTrue(isinstance(eb.modules_tool, NoModulesTool))
+
+        def fake_download_file(_filename, _url, path, *_args, **_kwargs):
+            write_file(path, 'content')
+            return True
+
+        mods = os.path.join(self.test_prefix, 'modules')
+        write_file(os.path.join(mods, 'foo', '1.2.3'), '#%Module')
+        self.modtool.use(mods)
+
+        mocked_modtool = unittest.mock.MagicMock()
+
+        with unittest.mock.patch(
+            'easybuild.framework.easyblock.modules_tool',
+            return_value=mocked_modtool,
+        ) as mocked_modules_tool, unittest.mock.patch(
+            'easybuild.framework.easyblock.download_file',
+            side_effect=fake_download_file,
+        ):
+            eb.fetch_step()
+
+        # verify that real modules tool instance was created, and that source deps got loaded
+        mocked_modules_tool.assert_called_once_with(modules_tool_name=mod_tool_name)
+        mocked_modtool.load.assert_called_once_with(['foo/1.2.3'])
+
+        # check that source file was actually "downloaded"
+        self.assertEqual(len(eb.src), 1)
+        self.assertEqual(eb.src[0]['name'], source_fn)
+        full_path = os.path.join(self.test_prefix, 'u', 'Uniq_1', source_fn)
+        self.assertTrue(os.path.samefile(eb.src[0]['path'], full_path))
+        self.assertTrue(os.path.exists(eb.src[0]['path']))
+
     def test_test_cases_step(self):
         """Test test_cases_step"""
         self.contents = '\n'.join([
@@ -1667,13 +1724,13 @@ class EasyBlockTest(EnhancedTestCase):
             modfile = os.path.join(eb.make_module_step(), 'toy',
                                    '0.0' + eb.module_generator.MODULE_FILE_EXTENSION)
         modtxt = read_file(modfile)
-        self.assert_multi_regex([
+        self.assertMultiRegex([
             'Included extensions',
             r'^\s*extra-0.0\s*$',
             r'Extensions: extra',
             r'EBEXTSLISTTOY.*extra',
             ],
-            modtxt)
+            modtxt, multi_line=True)
 
     def test_skip_extensions_step(self):
         """Test the skip_extensions_step"""
@@ -1710,7 +1767,7 @@ class EasyBlockTest(EnhancedTestCase):
             stdout = self.get_stdout()
         logtxt = read_file(eb.logfile)
         regexs = [r'Running shell command in .*:\n\sif \[ %s' % ext for ext in ['ext1', 'ext_2', 'real_ext']]
-        self.assert_multi_regex(regexs, logtxt)
+        self.assertMultiRegex(regexs, logtxt)
         # modulename: False skips the check
         self.assertNotRegex(logtxt, r"Running shell command .* in .*:\n\sif \[ (False|ext4)")
 
@@ -1720,7 +1777,7 @@ class EasyBlockTest(EnhancedTestCase):
             r"^== installing extension ext1  \(1/2\)\.\.\.",
             r"^== installing extension ext4 0.2 \(2/2\)\.\.\.",
         ]
-        self.assert_multi_regex(patterns, stdout)
+        self.assertMultiRegex(patterns, stdout, multi_line=True)
 
         # 'ext1' should be in eb.ext_instances
         eb_exts = [x.name for x in eb.ext_instances]

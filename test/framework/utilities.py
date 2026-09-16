@@ -39,6 +39,7 @@ import unittest
 from contextlib import contextmanager
 from importlib import reload
 from pathlib import Path
+from typing import List, Pattern, Union
 
 from test.framework import TEST_DIR, TEST_ECS_DIR, TEST_MODULES_DIR
 from easybuild.base import fancylogger
@@ -449,14 +450,25 @@ class EnhancedTestCase(TestCase):
                               line)
                 sys.stdout.write(line)
 
-    def assert_multi_regex(self, regexs, txt, assert_true=True, flags=re.M):
-        """Helper function to assert presence/absence of list of regex patterns in a text"""
+    def assertMultiRegex(self, regexs: List[Union[str, Pattern]], txt: str,
+                         multi_line: bool = False) -> None:
+        """Helper function to assert presence of list of regex patterns in a text
+        param: regexs: list of regex patterns to check for
+        param: txt: text to check for regex patterns
+        param: multi_line: if True, match ^/$ at the beginning/end of each line
+        """
         for regex in regexs:
-            regex = re.compile(regex, flags)
-            if assert_true:
-                self.assertRegex(txt, regex)
-            else:
-                self.assertNotRegex(txt, regex)
+            self.assertRegex(txt, re.compile(regex, re.M) if multi_line else regex)
+
+    def assertNotMultiRegex(self, regexs: List[Union[str, Pattern]], txt: str,
+                            multi_line: bool = True) -> None:
+        """Helper function to assert absence of list of regex patterns in a text
+        param: regexs: list of regex patterns to check for
+        param: txt: text to check for regex patterns
+        param: multi_line: if False, match ^/$ only at the beginning/end of the whole string
+        """
+        for regex in regexs:
+            self.assertNotRegex(txt, re.compile(regex, re.M) if multi_line else regex)
 
 
 class TestLoaderFiltered(unittest.TestLoader):
@@ -520,6 +532,7 @@ def init_config(args=None, build_options=None, with_include=True, clear_caches=T
         'external_modules_metadata': ConfigObj(),
         'local_var_naming_check': 'error',
         'show_progress_bar': False,
+        'orig_modules_tool': eb_go.orig_modules_tool,
         'output_style': 'no_color',
         'silence_deprecation_warnings': eb_go.options.silence_deprecation_warnings,
         'suffix_modules_path': GENERAL_CLASS,
