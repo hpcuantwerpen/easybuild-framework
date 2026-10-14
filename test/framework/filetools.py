@@ -1534,8 +1534,8 @@ class FileToolsTest(EnhancedTestCase):
         ft.remove_file(backup)
         ft.write_file(testfile, testtxt)
 
-        # extension of backed up file can be controlled
-        ft.apply_regex_substitutions(testfile, regex_subs, backup='.backup')
+        # extension of backed up file can be controlled and pathlib type is accepted
+        ft.apply_regex_substitutions(Path(testfile), regex_subs, backup='.backup')
 
         new_testtxt = ft.read_file(testfile)
         self.assertEqual(new_testtxt, expected_testtxt)
@@ -2547,29 +2547,30 @@ class FileToolsTest(EnhancedTestCase):
         test_dir = os.path.join(self.test_prefix, 'test123')
         test_link = os.path.join(self.test_prefix, 'foolink')
 
-        for remove_file_function in (ft.remove_file, ft.remove):
-            ft.write_file(testfile, 'bar')
-            self.assertExists(testfile)
-            # remove symlink
-            ft.symlink(testfile, test_link)
-            self.assertTrue(os.path.islink(test_link))
-            remove_file_function(test_link)
-            self.assertNotExists(test_link)
-            # remove file
-            remove_file_function(testfile)
-            self.assertNotExists(testfile)
-            # remove broken symlink
-            ft.symlink(testfile, test_link)
-            self.assertTrue(os.path.islink(test_link))
-            remove_file_function(test_link)
-            self.assertNotExists(test_link)
+        for path_type in (str, Path):
+            for remove_file_function in (ft.remove_file, ft.remove):
+                ft.write_file(testfile, 'bar')
+                self.assertExists(testfile)
+                # remove symlink
+                ft.symlink(testfile, test_link)
+                self.assertTrue(os.path.islink(test_link))
+                remove_file_function(path_type(test_link))
+                self.assertNotExists(test_link)
+                # remove file
+                remove_file_function(path_type(testfile))
+                self.assertNotExists(testfile)
+                # remove broken symlink
+                ft.symlink(testfile, test_link)
+                self.assertTrue(os.path.islink(test_link))
+                remove_file_function(path_type(test_link))
+                self.assertNotExists(test_link)
 
-        for remove_dir_function in (ft.remove_dir, ft.remove):
-            ft.mkdir(test_dir)
-            self.assertExists(test_dir)
-            self.assertTrue(os.path.isdir(test_dir))
-            remove_dir_function(test_dir)
-            self.assertNotExists(test_dir)
+            for remove_dir_function in (ft.remove_dir, ft.remove):
+                ft.mkdir(test_dir)
+                self.assertExists(test_dir)
+                self.assertTrue(os.path.isdir(test_dir))
+                remove_dir_function(path_type(test_dir))
+                self.assertNotExists(test_dir)
 
         # remove also takes a list of paths
         ft.write_file(testfile, 'bar')
@@ -2577,7 +2578,7 @@ class FileToolsTest(EnhancedTestCase):
         self.assertExists(testfile)
         self.assertExists(test_dir)
         self.assertTrue(os.path.isdir(test_dir))
-        ft.remove([testfile, test_dir])
+        ft.remove([testfile, Path(test_dir)])
         self.assertNotExists(testfile)
         self.assertNotExists(test_dir)
 
@@ -2597,19 +2598,18 @@ class FileToolsTest(EnhancedTestCase):
         }
         init_config(build_options=build_options)
 
-        for remove_file_function in (ft.remove_file, ft.remove):
-            with self.mocked_stdout():
-                remove_file_function(testfile)
-                txt = self.get_stdout()
+        for path_type in (str, Path):
+            for remove_file_function in (ft.remove_file, ft.remove):
+                with self.mocked_stdout():
+                    remove_file_function(path_type(testfile))
+                    txt = self.get_stdout()
+                    self.assertRegex(txt, "^file [^ ]* removed$")
 
-            self.assertRegex(txt, "^file [^ ]* removed$")
-
-        for remove_dir_function in (ft.remove_dir, ft.remove):
-            with self.mocked_stdout():
-                remove_dir_function(test_dir)
-                txt = self.get_stdout()
-
-            self.assertRegex(txt, "^directory [^ ]* removed$")
+            for remove_dir_function in (ft.remove_dir, ft.remove):
+                with self.mocked_stdout():
+                    remove_dir_function(path_type(test_dir))
+                    txt = self.get_stdout()
+                    self.assertRegex(txt, "^directory [^ ]* removed$")
 
         ft.adjust_permissions(self.test_prefix, stat.S_IWUSR, add=True)
 
@@ -3041,7 +3041,7 @@ class FileToolsTest(EnhancedTestCase):
         }
         init_config(build_options=build_options)
 
-        def run_check():
+        def run_check(expected: str):
             """Helper function to run get_source_tarball_from_git & check dry run output"""
             with self.mocked_stdout_stderr():
                 res = ft.get_source_tarball_from_git('test', target_dir, git_config)
@@ -3064,104 +3064,211 @@ class FileToolsTest(EnhancedTestCase):
             'test_prefix': self.test_prefix,
         }
 
-        expected = '\n'.join([
+        lfs_check_tag = (
+            r'  running shell command "git grep -I -h filter=lfs refs/tags/tag_for_tests -- '
+            r"':\(glob\)\*\*/\.gitattributes'\""
+        )
+
+        run_check('\n'.join([
             r'  running shell command "{git_clone_cmd} {git_repo}"',
             r"  \(in .*/tmp.*\)",
+            lfs_check_tag,
+            r"  \(in .*/{repo_name}\)",
             r'  running shell command "git checkout refs/tags/tag_for_tests"',
             r"  \(in .*/{repo_name}\)",
             r"Archiving '.*/{repo_name}' into '{test_prefix}/target/test.tar.xz'...",
-        ]).format(**string_args, repo_name='testrepository')
-        run_check()
+            ]).format(**string_args, repo_name='testrepository')
+        )
 
         git_config['clone_into'] = 'test123'
-        expected = '\n'.join([
+        run_check('\n'.join([
             r'  running shell command "{git_clone_cmd} {git_repo} test123"',
             r"  \(in .*/tmp.*\)",
+            lfs_check_tag,
+            r"  \(in .*/{repo_name}\)",
             r'  running shell command "git checkout refs/tags/tag_for_tests"',
             r"  \(in .*/{repo_name}\)",
             r"Archiving '.*/{repo_name}' into '{test_prefix}/target/test.tar.xz'...",
-        ]).format(**string_args, repo_name='test123')
-        run_check()
+            ]).format(**string_args, repo_name='test123')
+        )
         del git_config['clone_into']
 
         git_config['recursive'] = True
-        expected = '\n'.join([
+        run_check('\n'.join([
             r'  running shell command "{git_clone_cmd} {git_repo}"',
             r"  \(in .*/tmp.*\)",
+            lfs_check_tag,
+            r"  \(in .*/{repo_name}\)",
             r'  running shell command "git checkout refs/tags/tag_for_tests"',
             r"  \(in .*/{repo_name}\)",
             r'  running shell command "git submodule update --init --recursive"',
             r"  \(in .*/{repo_name}\)",
             r"Archiving '.*/{repo_name}' into '{test_prefix}/target/test.tar.xz'...",
-        ]).format(**string_args, repo_name='testrepository')
-        run_check()
+            ]).format(**string_args, repo_name='testrepository')
+        )
 
         git_config['recurse_submodules'] = ['!vcflib', '!sdsl-lite']
-        expected = '\n'.join([
+        run_check('\n'.join([
             r'  running shell command "{git_clone_cmd} {git_repo}"',
             r"  \(in .*/tmp.*\)",
+            lfs_check_tag,
+            r"  \(in .*/{repo_name}\)",
             r'  running shell command "git checkout refs/tags/tag_for_tests"',
             r"  \(in .*/{repo_name}\)",
             r'  running shell command "git submodule update --init --recursive -- \':!vcflib\' \':!sdsl-lite\'"',
             r"  \(in .*/{repo_name}\)",
             r"Archiving '.*/{repo_name}' into '{test_prefix}/target/test.tar.xz'...",
-        ]).format(**string_args, repo_name='testrepository')
-        run_check()
+            ]).format(**string_args, repo_name='testrepository')
+        )
 
         git_config['extra_config_params'] = [
             'submodule."fastahack".active=false',
             'submodule."sha1".active=false',
         ]
         git_cmd_extra = 'git -c submodule."fastahack".active=false -c submodule."sha1".active=false'
-        expected = '\n'.join([
+        lfs_check_extra = (
+            r'  running shell command "{git_cmd_extra} grep -I -h filter=lfs refs/tags/tag_for_tests -- '
+            r"':\(glob\)\*\*/\.gitattributes'\""
+        )
+        run_check('\n'.join([
             r'  running shell command "{git_cmd_extra} clone --no-checkout {git_repo}"',
             r"  \(in .*/tmp.*\)",
+            lfs_check_extra,
+            r"  \(in .*/{repo_name}\)",
             r'  running shell command "{git_cmd_extra} checkout refs/tags/tag_for_tests"',
             r"  \(in .*/{repo_name}\)",
             r'  running shell command "{git_cmd_extra} submodule update --init --recursive --'
             + ' \':!vcflib\' \':!sdsl-lite\'"',
             r"  \(in .*/{repo_name}\)",
             r"Archiving '.*/{repo_name}' into '{test_prefix}/target/test.tar.xz'...",
-        ]).format(**string_args, repo_name='testrepository', git_cmd_extra=git_cmd_extra)
-        run_check()
+            ]).format(**string_args, repo_name='testrepository', git_cmd_extra=git_cmd_extra)
+        )
         del git_config['recurse_submodules']
         del git_config['extra_config_params']
 
         del git_config['tag']
         git_config['commit'] = '8456f86'
-        expected = '\n'.join([
+        lfs_check_commit = (
+            r'  running shell command "git grep -I -h filter=lfs 8456f86 -- '
+            r"':\(glob\)\*\*/\.gitattributes'\""
+        )
+        run_check('\n'.join([
             r'  running shell command "git clone --no-checkout {git_repo}"',
             r"  \(in .*/tmp.*\)",
+            lfs_check_commit,
+            r"  \(in .*/{repo_name}\)",
             r'  running shell command "git checkout 8456f86"',
             r"  \(in .*/{repo_name}\)",
             r'  running shell command "git submodule update --init --recursive"',
             r"  \(in .*/{repo_name}\)",
             r"Archiving '.*/{repo_name}' into '{test_prefix}/target/test.tar.xz'...",
-        ]).format(**string_args, repo_name='testrepository')
-        run_check()
+            ]).format(**string_args, repo_name='testrepository')
+        )
 
         git_config['recurse_submodules'] = ['!vcflib', '!sdsl-lite']
-        expected = '\n'.join([
+        run_check('\n'.join([
             r'  running shell command "git clone --no-checkout {git_repo}"',
             r"  \(in .*/tmp.*\)",
+            lfs_check_commit,
+            r"  \(in .*/{repo_name}\)",
             r'  running shell command "git checkout 8456f86"',
             r"  \(in .*/{repo_name}\)",
             r'  running shell command "git submodule update --init --recursive -- \':!vcflib\' \':!sdsl-lite\'"',
             r"  \(in .*/{repo_name}\)",
             r"Archiving '.*/{repo_name}' into '{test_prefix}/target/test.tar.xz'...",
         ]).format(**string_args, repo_name='testrepository')
-        run_check()
+        )
 
         del git_config['recursive']
         del git_config['recurse_submodules']
-        expected = '\n'.join([
+        run_check('\n'.join([
             r'  running shell command "git clone --no-checkout {git_repo}"',
             r"  \(in .*\)",
+            lfs_check_commit,
+            r"  \(in .*/{repo_name}\)",
             r'  running shell command "git checkout 8456f86"',
             r"  \(in .*/{repo_name}\)",
             r"Archiving '.*/{repo_name}' into '{test_prefix}/target/test.tar.xz'...",
         ]).format(**string_args, repo_name='testrepository')
-        run_check()
+        )
+
+        # Check Git LFS handling when .gitattributes contains filter=lfs.
+        orig_run_shell_cmd = ft.run_shell_cmd
+
+        def mock_run_shell_cmd(cmd, *args, **kwargs):
+            res = orig_run_shell_cmd(cmd, *args, **kwargs)
+            if ' grep -I -h filter=lfs ' in cmd:
+                res = types.SimpleNamespace(
+                    exit_code=0,
+                    output='*.bam filter=lfs diff=lfs merge=lfs -text\n',
+                )
+            return res
+
+        ft.run_shell_cmd = mock_run_shell_cmd
+        try:
+            run_check('\n'.join([
+                r'  running shell command "git clone --no-checkout {git_repo}"',
+                r"  \(in .*\)",
+                lfs_check_commit,
+                r"  \(in .*/{repo_name}\)",
+                r'  running shell command "git lfs install --local --skip-repo"',
+                r"  \(in .*/{repo_name}\)",
+                r'  running shell command "git checkout 8456f86"',
+                r"  \(in .*/{repo_name}\)",
+                r"Archiving '.*/{repo_name}' into '{test_prefix}/target/test.tar.xz'...",
+            ]).format(**string_args, repo_name='testrepository')
+            )
+        finally:
+            ft.run_shell_cmd = orig_run_shell_cmd
+
+        # Ignore Git LFS attributes that are commented out.
+        def mock_run_shell_cmd(cmd, *args, **kwargs):
+            res = orig_run_shell_cmd(cmd, *args, **kwargs)
+            if ' grep -I -h filter=lfs ' in cmd:
+                res = types.SimpleNamespace(
+                    exit_code=0,
+                    output='# *.bam filter=lfs diff=lfs merge=lfs -text\n',
+                )
+            return res
+
+        ft.run_shell_cmd = mock_run_shell_cmd
+        try:
+            run_check('\n'.join([
+                r'  running shell command "git clone --no-checkout {git_repo}"',
+                r"  \(in .*\)",
+                lfs_check_commit,
+                r"  \(in .*/{repo_name}\)",
+                r'  running shell command "git checkout 8456f86"',
+                r"  \(in .*/{repo_name}\)",
+                r"Archiving '.*/{repo_name}' into '{test_prefix}/target/test.tar.xz'...",
+                ]).format(**string_args, repo_name='testrepository')
+            )
+        finally:
+            ft.run_shell_cmd = orig_run_shell_cmd
+
+        # Fail if checking for Git LFS attributes fails.
+        def mock_run_shell_cmd(cmd, *args, **kwargs):
+            res = orig_run_shell_cmd(cmd, *args, **kwargs)
+            if ' grep -I -h filter=lfs ' in cmd:
+                res = types.SimpleNamespace(
+                    exit_code=2,
+                    output='fatal: bad revision\n',
+                )
+            return res
+
+        ft.run_shell_cmd = mock_run_shell_cmd
+        try:
+            with self.mocked_stdout_stderr():
+                self.assertRaisesRegex(
+                    EasyBuildError,
+                    "Failed to determine whether Git repository uses Git LFS",
+                    ft.get_source_tarball_from_git,
+                    'test',
+                    target_dir,
+                    git_config,
+                )
+        finally:
+            ft.run_shell_cmd = orig_run_shell_cmd
 
         # tarball formats that are not reproducible
         bad_filenames = ['test.tar.gz', 'test.tar.bz2']
@@ -3231,7 +3338,7 @@ class FileToolsTest(EnhancedTestCase):
             self.assertEqual(res, test_file)
             self.assertTrue(os.path.isfile(test_file))
             test_tar_files.append(os.path.basename(test_file))
-            self.assertCountEqual(sorted(os.listdir(target_dir)), test_tar_files)
+            self.assertCountEqual(os.listdir(target_dir), test_tar_files)
             extracted_dir = tempfile.mkdtemp(prefix='extracted_dir')
             with self.mocked_stdout_stderr():
                 extracted_repo_dir = ft.extract_file(test_file, extracted_dir, change_into_dir=False)
@@ -3244,7 +3351,7 @@ class FileToolsTest(EnhancedTestCase):
             self.assertEqual(res, test_file)
             self.assertTrue(os.path.isfile(test_file))
             test_tar_files.append(os.path.basename(test_file))
-            self.assertCountEqual(sorted(os.listdir(target_dir)), test_tar_files)
+            self.assertCountEqual(os.listdir(target_dir), test_tar_files)
             extracted_dir = tempfile.mkdtemp(prefix='extracted_dir')
             with self.mocked_stdout_stderr():
                 extracted_repo_dir = ft.extract_file(test_file, extracted_dir, change_into_dir=False)
@@ -3259,7 +3366,7 @@ class FileToolsTest(EnhancedTestCase):
             self.assertEqual(res, test_file)
             self.assertTrue(os.path.isfile(test_file))
             test_tar_files.append(os.path.basename(test_file))
-            self.assertCountEqual(sorted(os.listdir(target_dir)), test_tar_files)
+            self.assertCountEqual(os.listdir(target_dir), test_tar_files)
             extracted_dir = tempfile.mkdtemp(prefix='extracted_dir')
             with self.mocked_stdout_stderr():
                 extracted_repo_dir = ft.extract_file(test_file, extracted_dir, change_into_dir=False)
@@ -3275,7 +3382,7 @@ class FileToolsTest(EnhancedTestCase):
             self.assertEqual(res, test_file)
             self.assertTrue(os.path.isfile(test_file))
             test_tar_files.append(os.path.basename(test_file))
-            self.assertCountEqual(sorted(os.listdir(target_dir)), test_tar_files)
+            self.assertCountEqual(os.listdir(target_dir), test_tar_files)
             extracted_dir = tempfile.mkdtemp(prefix='extracted_dir')
             with self.mocked_stdout_stderr():
                 extracted_repo_dir = ft.extract_file(test_file, extracted_dir, change_into_dir=False)
@@ -3291,7 +3398,7 @@ class FileToolsTest(EnhancedTestCase):
             self.assertEqual(res, test_file)
             self.assertTrue(os.path.isfile(test_file))
             test_tar_files.append(os.path.basename(test_file))
-            self.assertCountEqual(sorted(os.listdir(target_dir)), test_tar_files)
+            self.assertCountEqual(os.listdir(target_dir), test_tar_files)
             extracted_dir = tempfile.mkdtemp(prefix='extracted_dir')
             with self.mocked_stdout_stderr():
                 extracted_repo_dir = ft.extract_file(test_file, extracted_dir, change_into_dir=False)
